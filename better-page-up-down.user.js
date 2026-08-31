@@ -2,11 +2,14 @@
 // @name         Better PageUp / PageDown
 // @name:zh-TW   跨解析度 PageUp／PageDown
 // @namespace    better-page-scroll
-// @version      1.0.0
+// @version      1.0.1
 // @description  Scroll a configurable percentage on a tap, then leave held-key repeats to Chromium.
 // @description:zh-TW 輕按時捲動可設定的畫面比例；長按後續 repeat 完全交回 Chromium。
-// @homepageURL  https://github.com/29988122/better-page-up-down
+// @homepageURL  https://greasyfork.org/zh-TW/scripts/593678-better-pageup-pagedown
+// @source       https://github.com/29988122/better-page-up-down
 // @supportURL   https://github.com/29988122/better-page-up-down/issues
+// @updateURL    https://raw.githubusercontent.com/29988122/better-page-up-down/main/better-page-up-down.user.js
+// @downloadURL  https://raw.githubusercontent.com/29988122/better-page-up-down/main/better-page-up-down.user.js
 // @match        http://*/*
 // @match        https://*/*
 // @run-at       document-end

@@ -4,6 +4,7 @@
 
 ## 連結
 
+- [Greasy Fork 發布頁](https://greasyfork.org/zh-TW/scripts/593678-better-pageup-pagedown)
 - [直接安裝 GitHub raw 版本](https://raw.githubusercontent.com/29988122/better-page-up-down/main/better-page-up-down.user.js)
 - [GitHub 原始碼](https://github.com/29988122/better-page-up-down)
 - [問題回報](https://github.com/29988122/better-page-up-down/issues)
