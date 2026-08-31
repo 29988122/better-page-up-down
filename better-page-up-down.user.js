@@ -2,7 +2,7 @@
 // @name         Better PageUp / PageDown
 // @name:zh-TW   跨解析度 PageUp／PageDown
 // @namespace    better-page-scroll
-// @version      1.0.1
+// @version      1.0.2
 // @description  Scroll a configurable percentage on a tap, then leave held-key repeats to Chromium.
 // @description:zh-TW 輕按時捲動可設定的畫面比例；長按後續 repeat 完全交回 Chromium。
 // @homepageURL  https://greasyfork.org/zh-TW/scripts/593678-better-pageup-pagedown
@@ -28,6 +28,7 @@
   const DEFAULT_PERCENTAGE = 85;
   const STORAGE_KEY = 'page-scroll-percentage';
   const SCROLL_EPSILON = 1;
+  const ANIMATION_DURATION_MS = 140;
 
   const INTERACTIVE_SELECTOR = [
     'input',
@@ -50,6 +51,7 @@
   let currentPercentage = normalizePercentage(readStoredPercentage());
   let lastInteractionPath = [];
   let menuIds = [];
+  const activeAnimations = new Map();
 
   function normalizePercentage(value) {
     const numericValue = Number(value);
@@ -176,6 +178,90 @@
     return currentScrollTop > minimumScrollTop + SCROLL_EPSILON;
   }
 
+  function scrollBounds(element) {
+    const viewportHeight = scrollportHeight(element);
+    const scrollRange = Math.max(0, element.scrollHeight - viewportHeight);
+    const reverseColumn = !isRootScroller(element)
+      && getComputedStyle(element).flexDirection === 'column-reverse';
+
+    return reverseColumn
+      ? { minimum: -scrollRange, maximum: 0 }
+      : { minimum: 0, maximum: scrollRange };
+  }
+
+  function clamp(value, minimum, maximum) {
+    return Math.min(maximum, Math.max(minimum, value));
+  }
+
+  function easeInOutQuad(progress) {
+    return progress < 0.5
+      ? 2 * progress * progress
+      : 1 - ((-2 * progress + 2) ** 2) / 2;
+  }
+
+  function cancelScrollAnimation(scroller) {
+    const animation = activeAnimations.get(scroller);
+    if (!animation) return;
+
+    cancelAnimationFrame(animation.frameId);
+    activeAnimations.delete(scroller);
+  }
+
+  function cancelAllScrollAnimations() {
+    for (const scroller of activeAnimations.keys()) {
+      cancelScrollAnimation(scroller);
+    }
+  }
+
+  function animateScrollTo(scroller, targetScrollTop) {
+    const startScrollTop = scroller.scrollTop;
+    cancelScrollAnimation(scroller);
+
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+      scroller.scrollTop = targetScrollTop;
+      return;
+    }
+
+    const startedAt = performance.now();
+    const animation = {
+      frameId: 0,
+      targetScrollTop,
+      lastAppliedScrollTop: startScrollTop,
+    };
+
+    const step = (now) => {
+      if (activeAnimations.get(scroller) !== animation) return;
+      if (!scroller.isConnected) {
+        activeAnimations.delete(scroller);
+        return;
+      }
+
+      if (Math.abs(scroller.scrollTop - animation.lastAppliedScrollTop) > SCROLL_EPSILON) {
+        activeAnimations.delete(scroller);
+        return;
+      }
+
+      const progress = Math.min((now - startedAt) / ANIMATION_DURATION_MS, 1);
+      const easedProgress = easeInOutQuad(progress);
+      const nextScrollTop = startScrollTop
+        + (targetScrollTop - startScrollTop) * easedProgress;
+
+      scroller.scrollTop = nextScrollTop;
+      animation.lastAppliedScrollTop = scroller.scrollTop;
+
+      if (progress < 1) {
+        animation.frameId = requestAnimationFrame(step);
+        return;
+      }
+
+      scroller.scrollTop = targetScrollTop;
+      activeAnimations.delete(scroller);
+    };
+
+    activeAnimations.set(scroller, animation);
+    animation.frameId = requestAnimationFrame(step);
+  }
+
   function fallbackPathFromNode(node) {
     const path = [];
     const seen = new Set();
@@ -274,28 +360,21 @@
       return false;
     }
 
-    if (typeof scroller.scrollBy === 'function') {
-      scroller.scrollBy({
-        top: distance,
-        left: 0,
-        behavior: 'smooth',
-      });
-      return true;
+    const existingAnimation = activeAnimations.get(scroller);
+    const startingTarget = existingAnimation?.targetScrollTop ?? scroller.scrollTop;
+    const { minimum, maximum } = scrollBounds(scroller);
+    const targetScrollTop = clamp(startingTarget + distance, minimum, maximum);
+
+    if (Math.abs(targetScrollTop - scroller.scrollTop) <= SCROLL_EPSILON) {
+      return false;
     }
 
-    if (isRootScroller(scroller) && typeof window.scrollBy === 'function') {
-      window.scrollBy({
-        top: distance,
-        left: 0,
-        behavior: 'smooth',
-      });
-      return true;
-    }
-
-    return false;
+    animateScrollTo(scroller, targetScrollTop);
+    return true;
   }
 
   function rememberInteraction(event) {
+    cancelAllScrollAnimations();
     lastInteractionPath = elementsFromEventPath(event);
   }
 

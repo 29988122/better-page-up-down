@@ -27,7 +27,7 @@
 - 支援一般 scroll range，也處理 `flex-direction: column-reverse` 的負 `scrollTop` 聊天式捲動區。
 - 網站已處理 PageUp／PageDown、文字輸入、組字、修飾鍵組合時不介入。
 - 不使用 `stopPropagation()` 或 `stopImmediatePropagation()`。
-- 單按動畫由 Chromium 的 `behavior: "smooth"` 處理；不是手寫 easing。
+- 單按使用約 140 ms 的 ease-in-out 動畫；加上事件到首幀的時間後，完成速度接近 Chrome 鍵盤 PageDown 實測約 154 ms，避免 CSSOM `behavior: "smooth"` 約 440 ms 的拖慢感。
 
 ## 長按限制
 

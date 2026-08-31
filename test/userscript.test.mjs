@@ -45,9 +45,11 @@ test('held-key repeats are returned before any prevention or scrolling', () => {
   assert.ok(repeatReturn < customScroll);
 });
 
-test('script does not stop event propagation or implement its own animation loop', () => {
+test('single-tap animation is short and native-like without stopping propagation', () => {
   assert.doesNotMatch(source, /stopImmediatePropagation\s*\(/);
   assert.doesNotMatch(source, /stopPropagation\s*\(/);
-  assert.doesNotMatch(source, /requestAnimationFrame\s*\(/);
-  assert.match(source, /behavior: 'smooth'/);
+  assert.match(source, /ANIMATION_DURATION_MS = 140/);
+  assert.match(source, /function easeInOutQuad/);
+  assert.match(source, /requestAnimationFrame\s*\(/);
+  assert.doesNotMatch(source, /behavior: 'smooth'/);
 });
