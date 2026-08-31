@@ -2,7 +2,7 @@
 // @name         Better PageUp / PageDown
 // @name:zh-TW   跨解析度 PageUp／PageDown
 // @namespace    better-page-scroll
-// @version      1.0.2
+// @version      1.0.3
 // @description  Scroll a configurable percentage on a tap, then leave held-key repeats to Chromium.
 // @description:zh-TW 輕按時捲動可設定的畫面比例；長按後續 repeat 完全交回 Chromium。
 // @homepageURL  https://greasyfork.org/zh-TW/scripts/593678-better-pageup-pagedown
@@ -28,7 +28,8 @@
   const DEFAULT_PERCENTAGE = 85;
   const STORAGE_KEY = 'page-scroll-percentage';
   const SCROLL_EPSILON = 1;
-  const ANIMATION_DURATION_MS = 140;
+  const ANIMATION_DURATION_MS = 80;
+  const INITIAL_PROGRESS = 0.03;
 
   const INTERACTIVE_SELECTOR = [
     'input',
@@ -193,10 +194,15 @@
     return Math.min(maximum, Math.max(minimum, value));
   }
 
-  function easeInOutQuad(progress) {
-    return progress < 0.5
-      ? 2 * progress * progress
-      : 1 - ((-2 * progress + 2) ** 2) / 2;
+  function easeOutQuad(progress) {
+    return 1 - ((1 - progress) ** 2);
+  }
+
+  function setScrollTop(scroller, scrollTop) {
+    scroller.scrollTo({
+      top: scrollTop,
+      behavior: 'instant',
+    });
   }
 
   function cancelScrollAnimation(scroller) {
@@ -213,23 +219,31 @@
     }
   }
 
-  function animateScrollTo(scroller, targetScrollTop) {
+  function animateScrollTo(scroller, targetScrollTop, startedAt) {
     const startScrollTop = scroller.scrollTop;
     cancelScrollAnimation(scroller);
 
     if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
-      scroller.scrollTop = targetScrollTop;
+      setScrollTop(scroller, targetScrollTop);
       return;
     }
 
-    const startedAt = performance.now();
     const animation = {
       frameId: 0,
       targetScrollTop,
       lastAppliedScrollTop: startScrollTop,
     };
 
-    const step = (now) => {
+    const applyProgress = (progress) => {
+      const easedProgress = Math.max(INITIAL_PROGRESS, easeOutQuad(progress));
+      const nextScrollTop = startScrollTop
+        + (targetScrollTop - startScrollTop) * easedProgress;
+
+      setScrollTop(scroller, nextScrollTop);
+      animation.lastAppliedScrollTop = scroller.scrollTop;
+    };
+
+    const step = () => {
       if (activeAnimations.get(scroller) !== animation) return;
       if (!scroller.isConnected) {
         activeAnimations.delete(scroller);
@@ -241,24 +255,27 @@
         return;
       }
 
-      const progress = Math.min((now - startedAt) / ANIMATION_DURATION_MS, 1);
-      const easedProgress = easeInOutQuad(progress);
-      const nextScrollTop = startScrollTop
-        + (targetScrollTop - startScrollTop) * easedProgress;
-
-      scroller.scrollTop = nextScrollTop;
-      animation.lastAppliedScrollTop = scroller.scrollTop;
+      // The rAF timestamp describes the start of the frame. On a busy page,
+      // earlier callbacks can consume tens of milliseconds before this one
+      // runs, so read the actual execution time instead of extending the
+      // animation with a stale timestamp.
+      const progress = Math.min(
+        Math.max((performance.now() - startedAt) / ANIMATION_DURATION_MS, 0),
+        1,
+      );
+      applyProgress(progress);
 
       if (progress < 1) {
         animation.frameId = requestAnimationFrame(step);
         return;
       }
 
-      scroller.scrollTop = targetScrollTop;
+      setScrollTop(scroller, targetScrollTop);
       activeAnimations.delete(scroller);
     };
 
     activeAnimations.set(scroller, animation);
+    applyProgress(0);
     animation.frameId = requestAnimationFrame(step);
   }
 
@@ -352,7 +369,7 @@
     return canScrollInDirection(rootScroller, direction) ? rootScroller : null;
   }
 
-  function scrollByPercentage(scroller, direction) {
+  function scrollByPercentage(scroller, direction, startedAt) {
     const viewportHeight = scrollportHeight(scroller);
     const distance = viewportHeight * (currentPercentage / 100) * direction;
 
@@ -369,7 +386,7 @@
       return false;
     }
 
-    animateScrollTo(scroller, targetScrollTop);
+    animateScrollTo(scroller, targetScrollTop, startedAt);
     return true;
   }
 
@@ -390,6 +407,8 @@
     // Every auto-repeat event stays untouched so Chromium owns held-key cadence.
     if (event.repeat) return;
 
+    const startedAt = performance.now();
+
     if (
       event.defaultPrevented
       || event.isComposing
@@ -406,7 +425,7 @@
     const scroller = resolveScroller(event, direction);
     if (!scroller) return;
 
-    if (scrollByPercentage(scroller, direction)) {
+    if (scrollByPercentage(scroller, direction, startedAt)) {
       event.preventDefault();
     }
   }

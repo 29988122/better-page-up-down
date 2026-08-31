@@ -27,7 +27,8 @@
 - 支援一般 scroll range，也處理 `flex-direction: column-reverse` 的負 `scrollTop` 聊天式捲動區。
 - 網站已處理 PageUp／PageDown、文字輸入、組字、修飾鍵組合時不介入。
 - 不使用 `stopPropagation()` 或 `stopImmediatePropagation()`。
-- 單按使用約 140 ms 的 ease-in-out 動畫；加上事件到首幀的時間後，完成速度接近 Chrome 鍵盤 PageDown 實測約 154 ms，避免 CSSOM `behavior: "smooth"` 約 440 ms 的拖慢感。
+- 單按會先同步套用 3% 位移，再以約 80 ms 的 ease-out 動畫快速完成；每一幀都以實際執行時間追趕進度，因此頁面短暫掉幀不會把動畫繼續往後拖。
+- 每次位置更新都明確使用 `behavior: "instant"`，避免網站自身的 CSS smooth scrolling 再次加工而變慢。
 
 ## 長按限制
 
@@ -44,6 +45,8 @@ node --test test/userscript.test.mjs
 ```
 
 瀏覽器 fixture 位於 `test/browser-fixture.html`，涵蓋根頁面、nested scroller、祖先 fallback、網站快捷鍵、互動元件、auto-repeat 與多種 viewport／比例。
+
+`test/browser-runner.js` 是可交給 Playwright CLI `run-code` 的真實瀏覽器測試，另含十次 timing trace、40 ms long-task 追趕、快速連按及 reduced-motion 驗收。先從專案根目錄以 HTTP server 提供 fixture，再在 Chromium 執行該 runner。
 
 ## 授權
 

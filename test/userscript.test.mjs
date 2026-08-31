@@ -45,11 +45,16 @@ test('held-key repeats are returned before any prevention or scrolling', () => {
   assert.ok(repeatReturn < customScroll);
 });
 
-test('single-tap animation is short and native-like without stopping propagation', () => {
+test('single-tap animation is short, deadline-based, and does not stop propagation', () => {
   assert.doesNotMatch(source, /stopImmediatePropagation\s*\(/);
   assert.doesNotMatch(source, /stopPropagation\s*\(/);
-  assert.match(source, /ANIMATION_DURATION_MS = 140/);
-  assert.match(source, /function easeInOutQuad/);
+  assert.match(source, /ANIMATION_DURATION_MS = 80/);
+  assert.match(source, /INITIAL_PROGRESS = 0\.03/);
+  assert.match(source, /function easeOutQuad/);
+  assert.match(source, /applyProgress\(0\)/);
   assert.match(source, /requestAnimationFrame\s*\(/);
+  assert.match(source, /performance\.now\(\) - startedAt/);
+  assert.match(source, /behavior: 'instant'/);
   assert.doesNotMatch(source, /behavior: 'smooth'/);
+  assert.doesNotMatch(source, /const step = \(now\)/);
 });
