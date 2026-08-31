@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-TW">
+<head>
+  <meta charset="utf-8">
+  <style>
+    html, body { margin: 0; }
+    #inner-nested { height: 240px; overflow-y: auto; border: 2px solid #0f766e; }
+    #inner-content { height: 3000px; background: linear-gradient(#fff, #99f6e4); }
+  </style>
+  <script>
+    (() => {
+      const store = new Map();
+      const listeners = [];
+      let nextMenuId = 1;
+      window.GM_getValue = (key, defaultValue) => store.has(key) ? store.get(key) : defaultValue;
+      window.GM_setValue = (key, value) => {
+        const oldValue = store.get(key);
+        store.set(key, value);
+        listeners.forEach((entry) => entry(key, oldValue, value, false));
+      };
+      window.GM_registerMenuCommand = () => nextMenuId++;
+      window.GM_unregisterMenuCommand = () => true;
+      window.GM_addValueChangeListener = (_key, callback) => listeners.push(callback);
+    })();
+  </script>
+</head>
+<body>
+  <div id="inner-nested" tabindex="0"><div id="inner-content">Iframe nested content</div></div>
+  <script src="../better-page-up-down.user.js"></script>
+</body>
+</html>

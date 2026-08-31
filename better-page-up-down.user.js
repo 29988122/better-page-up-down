@@ -1,0 +1,349 @@
+// ==UserScript==
+// @name         Better PageUp / PageDown
+// @name:zh-TW   跨解析度 PageUp／PageDown
+// @namespace    better-page-scroll
+// @version      1.0.0
+// @description  Scroll a configurable percentage on a tap, then leave held-key repeats to Chromium.
+// @description:zh-TW 輕按時捲動可設定的畫面比例；長按後續 repeat 完全交回 Chromium。
+// @homepageURL  https://github.com/29988122/better-page-up-down
+// @supportURL   https://github.com/29988122/better-page-up-down/issues
+// @match        http://*/*
+// @match        https://*/*
+// @run-at       document-end
+// @grant        GM_registerMenuCommand
+// @grant        GM_unregisterMenuCommand
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_addValueChangeListener
+// @license      MIT
+// ==/UserScript==
+
+(() => {
+  'use strict';
+
+  const ALLOWED_PERCENTAGES = Object.freeze([70, 75, 80, 85, 90]);
+  const DEFAULT_PERCENTAGE = 85;
+  const STORAGE_KEY = 'page-scroll-percentage';
+  const SCROLL_EPSILON = 1;
+
+  const INTERACTIVE_SELECTOR = [
+    'input',
+    'textarea',
+    'select',
+    'option',
+    '[contenteditable]:not([contenteditable="false"])',
+    '[role="textbox"]',
+    '[role="combobox"]',
+    '[role="listbox"]',
+    '[role="menu"]',
+    '[role="menubar"]',
+    '[role="grid"]',
+    '[role="tree"]',
+    '[role="slider"]',
+    '[role="spinbutton"]',
+    '[role="tablist"]',
+  ].join(',');
+
+  let currentPercentage = normalizePercentage(readStoredPercentage());
+  let lastInteractionPath = [];
+  let menuIds = [];
+
+  function normalizePercentage(value) {
+    const numericValue = Number(value);
+    return ALLOWED_PERCENTAGES.includes(numericValue)
+      ? numericValue
+      : DEFAULT_PERCENTAGE;
+  }
+
+  function readStoredPercentage() {
+    if (typeof GM_getValue !== 'function') return DEFAULT_PERCENTAGE;
+    return GM_getValue(STORAGE_KEY, DEFAULT_PERCENTAGE);
+  }
+
+  function writeStoredPercentage(value) {
+    if (typeof GM_setValue === 'function') {
+      GM_setValue(STORAGE_KEY, value);
+    }
+  }
+
+  function unregisterMenus() {
+    if (typeof GM_unregisterMenuCommand !== 'function') {
+      menuIds = [];
+      return;
+    }
+
+    for (const id of menuIds) {
+      try {
+        GM_unregisterMenuCommand(id);
+      } catch {
+        // A page navigation or manager refresh may already have removed it.
+      }
+    }
+    menuIds = [];
+  }
+
+  function registerMenus() {
+    if (typeof GM_registerMenuCommand !== 'function') return;
+
+    unregisterMenus();
+    for (const percentage of ALLOWED_PERCENTAGES) {
+      const selected = percentage === currentPercentage;
+      const label = `${selected ? '✓ ' : ''}PageUp／PageDown：${percentage}%`;
+      const id = GM_registerMenuCommand(
+        label,
+        () => setPercentage(percentage),
+        {
+          title: selected
+            ? `目前每次輕按捲動 ${percentage}% 畫面高度`
+            : `改為每次輕按捲動 ${percentage}% 畫面高度`,
+          autoClose: true,
+        },
+      );
+      menuIds.push(id);
+    }
+  }
+
+  function setPercentage(value, persist = true) {
+    const nextPercentage = normalizePercentage(value);
+    if (nextPercentage === currentPercentage) return;
+
+    currentPercentage = nextPercentage;
+    if (persist) writeStoredPercentage(nextPercentage);
+    registerMenus();
+  }
+
+  function isElement(node) {
+    return Boolean(node && node.nodeType === 1);
+  }
+
+  function getRootScroller() {
+    return document.scrollingElement || document.documentElement;
+  }
+
+  function isRootScroller(element) {
+    const rootScroller = getRootScroller();
+    return Boolean(
+      element
+      && (
+        element === rootScroller
+        || element === document.documentElement
+        || (element === document.body && rootScroller === document.body)
+      )
+    );
+  }
+
+  function rootScrollportHeight() {
+    return document.documentElement?.clientHeight || window.innerHeight || 0;
+  }
+
+  function scrollportHeight(element) {
+    return isRootScroller(element)
+      ? rootScrollportHeight()
+      : element.clientHeight;
+  }
+
+  function isScrollable(element) {
+    if (!isElement(element) || !element.isConnected) return false;
+
+    const viewportHeight = scrollportHeight(element);
+    if (viewportHeight <= 0 || element.scrollHeight <= viewportHeight + SCROLL_EPSILON) {
+      return false;
+    }
+
+    if (isRootScroller(element)) return true;
+
+    const overflowY = getComputedStyle(element).overflowY;
+    return /^(auto|scroll|overlay)$/.test(overflowY);
+  }
+
+  function canScrollInDirection(element, direction) {
+    if (!isScrollable(element)) return false;
+
+    const viewportHeight = scrollportHeight(element);
+    const scrollRange = Math.max(0, element.scrollHeight - viewportHeight);
+    const currentScrollTop = element.scrollTop;
+    const reverseColumn = !isRootScroller(element)
+      && getComputedStyle(element).flexDirection === 'column-reverse';
+    const minimumScrollTop = reverseColumn ? -scrollRange : 0;
+    const maximumScrollTop = reverseColumn ? 0 : scrollRange;
+
+    if (direction > 0) {
+      return currentScrollTop < maximumScrollTop - SCROLL_EPSILON;
+    }
+    return currentScrollTop > minimumScrollTop + SCROLL_EPSILON;
+  }
+
+  function fallbackPathFromNode(node) {
+    const path = [];
+    const seen = new Set();
+    let current = isElement(node) ? node : null;
+
+    while (current && !seen.has(current)) {
+      path.push(current);
+      seen.add(current);
+
+      if (current.parentElement) {
+        current = current.parentElement;
+        continue;
+      }
+
+      const root = current.getRootNode?.();
+      current = isElement(root?.host) ? root.host : null;
+    }
+
+    return path;
+  }
+
+  function elementsFromEventPath(event) {
+    const composedPath = typeof event.composedPath === 'function'
+      ? event.composedPath()
+      : [];
+    const elements = composedPath.filter(isElement);
+    return elements.length > 0 ? elements : fallbackPathFromNode(event.target);
+  }
+
+  function deepActiveElement() {
+    let activeElement = document.activeElement;
+    const seen = new Set();
+
+    while (
+      isElement(activeElement)
+      && activeElement.shadowRoot
+      && isElement(activeElement.shadowRoot.activeElement)
+      && !seen.has(activeElement)
+    ) {
+      seen.add(activeElement);
+      activeElement = activeElement.shadowRoot.activeElement;
+    }
+
+    return isElement(activeElement) ? activeElement : null;
+  }
+
+  function isInteractivePath(path) {
+    for (const element of path) {
+      if (!isElement(element)) continue;
+      if (element.isContentEditable || element.matches?.(INTERACTIVE_SELECTOR)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function findNestedScroller(path, direction) {
+    const seen = new Set();
+
+    for (const pathElement of path) {
+      const candidates = fallbackPathFromNode(pathElement);
+      for (const candidate of candidates) {
+        if (seen.has(candidate) || isRootScroller(candidate)) continue;
+        seen.add(candidate);
+        if (canScrollInDirection(candidate, direction)) return candidate;
+      }
+    }
+
+    return null;
+  }
+
+  function resolveScroller(event, direction) {
+    const eventPath = elementsFromEventPath(event);
+
+    const focusedScroller = findNestedScroller(eventPath, direction);
+    if (focusedScroller) return focusedScroller;
+
+    const activeElement = deepActiveElement();
+    const activeScroller = activeElement
+      ? findNestedScroller(fallbackPathFromNode(activeElement), direction)
+      : null;
+    if (activeScroller) return activeScroller;
+
+    const recentScroller = findNestedScroller(lastInteractionPath, direction);
+    if (recentScroller) return recentScroller;
+
+    const rootScroller = getRootScroller();
+    return canScrollInDirection(rootScroller, direction) ? rootScroller : null;
+  }
+
+  function scrollByPercentage(scroller, direction) {
+    const viewportHeight = scrollportHeight(scroller);
+    const distance = viewportHeight * (currentPercentage / 100) * direction;
+
+    if (!Number.isFinite(distance) || Math.abs(distance) <= SCROLL_EPSILON) {
+      return false;
+    }
+
+    if (typeof scroller.scrollBy === 'function') {
+      scroller.scrollBy({
+        top: distance,
+        left: 0,
+        behavior: 'smooth',
+      });
+      return true;
+    }
+
+    if (isRootScroller(scroller) && typeof window.scrollBy === 'function') {
+      window.scrollBy({
+        top: distance,
+        left: 0,
+        behavior: 'smooth',
+      });
+      return true;
+    }
+
+    return false;
+  }
+
+  function rememberInteraction(event) {
+    lastInteractionPath = elementsFromEventPath(event);
+  }
+
+  function hasModifier(event) {
+    return event.metaKey || event.ctrlKey || event.altKey || event.shiftKey;
+  }
+
+  function handleKeydown(event) {
+    const isPageDown = event.key === 'PageDown';
+    const isPageUp = event.key === 'PageUp';
+    if (!isPageDown && !isPageUp) return;
+
+    // Every auto-repeat event stays untouched so Chromium owns held-key cadence.
+    if (event.repeat) return;
+
+    if (
+      event.defaultPrevented
+      || event.isComposing
+      || !event.cancelable
+      || hasModifier(event)
+    ) {
+      return;
+    }
+
+    const eventPath = elementsFromEventPath(event);
+    if (isInteractivePath(eventPath)) return;
+
+    const direction = isPageDown ? 1 : -1;
+    const scroller = resolveScroller(event, direction);
+    if (!scroller) return;
+
+    if (scrollByPercentage(scroller, direction)) {
+      event.preventDefault();
+    }
+  }
+
+  window.addEventListener('pointerdown', rememberInteraction, {
+    capture: true,
+    passive: true,
+  });
+  window.addEventListener('wheel', rememberInteraction, {
+    capture: true,
+    passive: true,
+  });
+  window.addEventListener('keydown', handleKeydown, false);
+
+  if (typeof GM_addValueChangeListener === 'function') {
+    GM_addValueChangeListener(STORAGE_KEY, (_name, _oldValue, newValue) => {
+      setPercentage(newValue, false);
+    });
+  }
+
+  registerMenus();
+})();

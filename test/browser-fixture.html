@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="zh-TW">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Better PageUp / PageDown fixture</title>
+  <style>
+    html, body { margin: 0; min-height: 100%; }
+    body { font: 16px/1.5 system-ui, sans-serif; }
+    .toolbar { position: relative; z-index: 2; padding: 16px; background: #eef2ff; }
+    #nested {
+      width: min(720px, calc(100vw - 64px));
+      height: 320px;
+      margin: 24px 32px;
+      overflow-y: auto;
+      border: 2px solid #334155;
+      outline-offset: 4px;
+    }
+    #nested-content { height: 4200px; padding: 16px; background: linear-gradient(#fff, #bfdbfe); }
+    #reverse {
+      display: flex;
+      flex-direction: column-reverse;
+      width: min(720px, calc(100vw - 64px));
+      height: 240px;
+      margin: 24px 32px;
+      overflow-y: auto;
+      border: 2px solid #be123c;
+    }
+    #reverse-content { flex: 0 0 3000px; background: linear-gradient(#fecdd3, #fff); }
+    #site-widget { display: block; width: 240px; height: 72px; margin: 24px 32px; border: 2px solid #7c3aed; }
+    .root-content { height: 9000px; padding: 32px; background: linear-gradient(#f8fafc, #d1fae5); }
+  </style>
+  <script>
+    (() => {
+      const store = new Map();
+      const menus = new Map();
+      const valueListeners = new Map();
+      let nextMenuId = 1;
+      let nextListenerId = 1;
+      let sitePreventionEnabled = false;
+
+      window.GM_getValue = (key, defaultValue) => store.has(key) ? store.get(key) : defaultValue;
+      window.GM_setValue = (key, value) => {
+        const oldValue = store.get(key);
+        store.set(key, value);
+        for (const listener of valueListeners.values()) {
+          if (listener.key === key) listener.callback(key, oldValue, value, false);
+        }
+      };
+      window.GM_registerMenuCommand = (label, callback, options) => {
+        const id = nextMenuId++;
+        menus.set(id, { label, callback, options });
+        return id;
+      };
+      window.GM_unregisterMenuCommand = (id) => menus.delete(id);
+      window.GM_addValueChangeListener = (key, callback) => {
+        const id = nextListenerId++;
+        valueListeners.set(id, { key, callback });
+        return id;
+      };
+
+      document.addEventListener('keydown', (event) => {
+        if (
+          sitePreventionEnabled
+          && (event.key === 'PageDown' || event.key === 'PageUp')
+        ) {
+          event.preventDefault();
+        }
+      });
+
+      window.__fixtureState = {
+        store,
+        menus,
+        setSitePrevention(value) {
+          sitePreventionEnabled = Boolean(value);
+        },
+      };
+    })();
+  </script>
+</head>
+<body tabindex="-1">
+  <div class="toolbar">
+    <label>輸入欄 <input id="editor" value="PageDown must remain native here"></label>
+  </div>
+
+  <div id="nested" tabindex="0" aria-label="Nested scroller">
+    <div id="nested-content">Nested scroll content</div>
+  </div>
+
+  <div id="reverse" tabindex="0" aria-label="Reverse nested scroller">
+    <div id="reverse-content">Column-reverse chat-like content</div>
+  </div>
+
+  <div id="site-widget" role="grid" tabindex="0">Website-owned PageUp/PageDown widget</div>
+  <iframe id="test-frame" title="Iframe fixture" src="browser-fixture-inner.html"></iframe>
+  <div class="root-content">Root scroll content</div>
+
+  <script src="../better-page-up-down.user.js"></script>
+  <script>
+    (() => {
+      const keyEvents = [];
+      window.addEventListener('keydown', (event) => {
+        keyEvents.push({
+          key: event.key,
+          repeat: event.repeat,
+          defaultPrevented: event.defaultPrevented,
+          targetId: event.target?.id || '',
+        });
+      });
+
+      window.fixture = {
+        async reset() {
+          document.documentElement.style.zoom = '';
+          window.__fixtureState.setSitePrevention(false);
+          document.scrollingElement.scrollTo({ top: 0, behavior: 'instant' });
+          document.querySelector('#nested').scrollTo({ top: 0, behavior: 'instant' });
+          document.querySelector('#reverse').scrollTo({ top: 0, behavior: 'instant' });
+          document.body.focus();
+          keyEvents.length = 0;
+          await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        },
+        choosePercentage(percentage) {
+          const suffix = `${percentage}%`;
+          const entry = [...window.__fixtureState.menus.values()]
+            .find((menu) => menu.label.endsWith(suffix));
+          if (!entry) throw new Error(`Menu not found: ${percentage}%`);
+          entry.callback();
+        },
+        focusRoot() {
+          document.body.focus();
+        },
+        focusNested() {
+          document.querySelector('#nested').focus();
+        },
+        focusReverse() {
+          document.querySelector('#reverse').focus();
+        },
+        focusEditor() {
+          document.querySelector('#editor').focus();
+        },
+        focusWidget() {
+          document.querySelector('#site-widget').focus();
+        },
+        focusRootAfterNestedPointer() {
+          document.body.focus();
+        },
+        setSitePrevention(value) {
+          window.__fixtureState.setSitePrevention(value);
+        },
+        menuLabels() {
+          return [...window.__fixtureState.menus.values()].map((menu) => menu.label);
+        },
+        positions() {
+          const nested = document.querySelector('#nested');
+          const reverse = document.querySelector('#reverse');
+          return {
+            root: document.scrollingElement.scrollTop,
+            rootViewport: document.documentElement.clientHeight,
+            nested: nested.scrollTop,
+            nestedViewport: nested.clientHeight,
+            nestedMaximum: nested.scrollHeight - nested.clientHeight,
+            reverse: reverse.scrollTop,
+            reverseViewport: reverse.clientHeight,
+            reverseRange: reverse.scrollHeight - reverse.clientHeight,
+          };
+        },
+        lastKeyEvent() {
+          return keyEvents.at(-1) || null;
+        },
+        clearKeyEvents() {
+          keyEvents.length = 0;
+        },
+      };
+    })();
+  </script>
+</body>
+</html>
