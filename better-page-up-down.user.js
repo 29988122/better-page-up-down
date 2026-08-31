@@ -2,7 +2,7 @@
 // @name         Better PageUp / PageDown
 // @name:zh-TW   跨解析度 PageUp／PageDown
 // @namespace    better-page-scroll
-// @version      1.0.3
+// @version      1.0.4
 // @description  Scroll a configurable percentage on a tap, then leave held-key repeats to Chromium.
 // @description:zh-TW 輕按時捲動可設定的畫面比例；長按後續 repeat 完全交回 Chromium。
 // @homepageURL  https://greasyfork.org/zh-TW/scripts/593678-better-pageup-pagedown
@@ -28,8 +28,8 @@
   const DEFAULT_PERCENTAGE = 85;
   const STORAGE_KEY = 'page-scroll-percentage';
   const SCROLL_EPSILON = 1;
-  const ANIMATION_DURATION_MS = 80;
-  const INITIAL_PROGRESS = 0.03;
+  const ANIMATION_DURATION_MS = 146;
+  const INITIAL_PROGRESS = 0.01;
 
   const INTERACTIVE_SELECTOR = [
     'input',
@@ -194,8 +194,27 @@
     return Math.min(maximum, Math.max(minimum, value));
   }
 
-  function easeOutQuad(progress) {
-    return 1 - ((1 - progress) ** 2);
+  function nativeEaseInOut(progress) {
+    // Chromium's keyboard PageDown trace closely matches the standard CSS
+    // ease-in-out curve: cubic-bezier(0.42, 0, 0.58, 1). Solve the Bezier x
+    // coordinate, then return its y coordinate so scrollTop can use the same
+    // acceleration and braking shape without CSS smooth scrolling.
+    let lower = 0;
+    let upper = 1;
+
+    for (let iteration = 0; iteration < 10; iteration += 1) {
+      const parameter = (lower + upper) / 2;
+      const inverse = 1 - parameter;
+      const x = 3 * inverse * inverse * parameter * 0.42
+        + 3 * inverse * parameter * parameter * 0.58
+        + parameter * parameter * parameter;
+
+      if (x < progress) lower = parameter;
+      else upper = parameter;
+    }
+
+    const parameter = (lower + upper) / 2;
+    return parameter * parameter * (3 - 2 * parameter);
   }
 
   function setScrollTop(scroller, scrollTop) {
@@ -235,7 +254,7 @@
     };
 
     const applyProgress = (progress) => {
-      const easedProgress = Math.max(INITIAL_PROGRESS, easeOutQuad(progress));
+      const easedProgress = Math.max(INITIAL_PROGRESS, nativeEaseInOut(progress));
       const nextScrollTop = startScrollTop
         + (targetScrollTop - startScrollTop) * easedProgress;
 

@@ -27,7 +27,8 @@
 - 支援一般 scroll range，也處理 `flex-direction: column-reverse` 的負 `scrollTop` 聊天式捲動區。
 - 網站已處理 PageUp／PageDown、文字輸入、組字、修飾鍵組合時不介入。
 - 不使用 `stopPropagation()` 或 `stopImmediatePropagation()`。
-- 單按會先同步套用 3% 位移，再以約 80 ms 的 ease-out 動畫快速完成；每一幀都以實際執行時間追趕進度，因此頁面短暫掉幀不會把動畫繼續往後拖。
+- 單按會先同步套用 1% 位移作為即時回饋，再用約 146 ms 的 `cubic-bezier(0.42, 0, 0.58, 1)` ease-in-out 曲線完成；這條曲線與時長來自 Chromium 原生 PageDown 的逐幀量測，保留可感知的起步加速與末段煞車。
+- 每一幀都以 callback 實際執行時的 `performance.now()` 計算進度；頁面掉幀時會跳到當下應有的位置，不會從中斷處重新慢慢播放。
 - 每次位置更新都明確使用 `behavior: "instant"`，避免網站自身的 CSS smooth scrolling 再次加工而變慢。
 
 ## 長按限制

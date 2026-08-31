@@ -27,7 +27,7 @@ async (page) => {
     await page.evaluate(() => window.fixture.reset());
   }
 
-  async function pressAndSettle(key, waitMs = 180) {
+  async function pressAndSettle(key, waitMs = 220) {
     await page.keyboard.press(key);
     await page.waitForTimeout(waitMs);
   }
@@ -160,6 +160,12 @@ async (page) => {
   const simpleHalfTimes = simpleTimingTraces.map((trace) => (
     firstWriteAtOrBeyond(trace, trace.expected, 0.5)
   ));
+  const simpleTenTimes = simpleTimingTraces.map((trace) => (
+    firstWriteAtOrBeyond(trace, trace.expected, 0.1)
+  ));
+  const simpleNinetyTimes = simpleTimingTraces.map((trace) => (
+    firstWriteAtOrBeyond(trace, trace.expected, 0.9)
+  ));
   const simpleTargetTimes = simpleTimingTraces.map((trace) => (
     firstWriteAtOrBeyond(trace, trace.expected - 1, 1)
   ));
@@ -168,16 +174,25 @@ async (page) => {
     simpleTimingTraces.every((trace) => (
       trace.writes.length > 1
       && trace.writes[0].t <= 5
-      && near(trace.writes[0].y, trace.expected * 0.03)
+      && near(trace.writes[0].y, trace.expected * 0.01)
       && trace.writes.every((entry) => entry.behavior === 'instant')
       && near(trace.final, trace.expected)
     ))
+      && simpleTenTimes.every(Number.isFinite)
       && simpleHalfTimes.every(Number.isFinite)
+      && simpleNinetyTimes.every(Number.isFinite)
       && simpleTargetTimes.every(Number.isFinite)
-      && percentile(simpleHalfTimes, 0.95) <= 45
-      && percentile(simpleTargetTimes, 0.95) <= 100,
+      && percentile(simpleTenTimes, 0.95) >= 20
+      && percentile(simpleTenTimes, 0.95) <= 45
+      && percentile(simpleHalfTimes, 0.95) >= 60
+      && percentile(simpleHalfTimes, 0.95) <= 90
+      && percentile(simpleNinetyTimes, 0.95) >= 100
+      && percentile(simpleNinetyTimes, 0.95) <= 135
+      && percentile(simpleTargetTimes, 0.95) <= 165,
     {
+      p95Ten: percentile(simpleTenTimes, 0.95),
       p95Half: percentile(simpleHalfTimes, 0.95),
+      p95Ninety: percentile(simpleNinetyTimes, 0.95),
       p95Target: percentile(simpleTargetTimes, 0.95),
       traces: simpleTimingTraces,
     },
@@ -191,15 +206,16 @@ async (page) => {
     firstWriteAtOrBeyond(trace, trace.expected - 1, 1)
   ));
   record(
-    '40ms long task catches up from actual execution time',
+    '40ms long task preserves the native-like curve while honoring the deadline',
     longTaskTraces.every((trace) => {
       const catchUpWrite = trace.writes.slice(1).find((entry) => entry.t <= 55);
       return catchUpWrite
-        && catchUpWrite.y >= trace.expected * 0.7
+        && catchUpWrite.y >= trace.expected * 0.1
+        && catchUpWrite.y <= trace.expected * 0.35
         && near(trace.final, trace.expected);
     })
       && longTaskTargetTimes.every(Number.isFinite)
-      && percentile(longTaskTargetTimes, 0.95) <= 100,
+      && percentile(longTaskTargetTimes, 0.95) <= 165,
     {
       p95Target: percentile(longTaskTargetTimes, 0.95),
       traces: longTaskTraces,
