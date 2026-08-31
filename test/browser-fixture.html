@@ -32,20 +32,40 @@
   </style>
   <script>
     (() => {
-      const store = new Map();
+      const storagePrefix = '__better_page_fixture_gm__:';
       const menus = new Map();
       const valueListeners = new Map();
       let nextMenuId = 1;
       let nextListenerId = 1;
       let sitePreventionEnabled = false;
 
-      window.GM_getValue = (key, defaultValue) => store.has(key) ? store.get(key) : defaultValue;
-      window.GM_setValue = (key, value) => {
-        const oldValue = store.get(key);
-        store.set(key, value);
-        for (const listener of valueListeners.values()) {
-          if (listener.key === key) listener.callback(key, oldValue, value, false);
+      const storageKey = (key) => `${storagePrefix}${key}`;
+      const decode = (value, fallback) => {
+        if (value === null) return fallback;
+        try {
+          return JSON.parse(value);
+        } catch {
+          return fallback;
         }
+      };
+      const notify = (key, oldValue, newValue, remote) => {
+        for (const listener of valueListeners.values()) {
+          if (listener.key === key) listener.callback(key, oldValue, newValue, remote);
+        }
+      };
+
+      window.GM_getValue = (key, defaultValue) => (
+        decode(localStorage.getItem(storageKey(key)), defaultValue)
+      );
+      window.GM_setValue = (key, value) => {
+        const oldValue = window.GM_getValue(key, undefined);
+        localStorage.setItem(storageKey(key), JSON.stringify(value));
+        notify(key, oldValue, value, false);
+      };
+      window.GM_deleteValue = (key) => {
+        const oldValue = window.GM_getValue(key, undefined);
+        localStorage.removeItem(storageKey(key));
+        notify(key, oldValue, undefined, false);
       };
       window.GM_registerMenuCommand = (label, callback, options) => {
         const id = nextMenuId++;
@@ -59,6 +79,17 @@
         return id;
       };
 
+      window.addEventListener('storage', (event) => {
+        if (!event.key?.startsWith(storagePrefix)) return;
+        const key = event.key.slice(storagePrefix.length);
+        notify(
+          key,
+          decode(event.oldValue, undefined),
+          decode(event.newValue, undefined),
+          true,
+        );
+      });
+
       document.addEventListener('keydown', (event) => {
         if (
           sitePreventionEnabled
@@ -69,8 +100,16 @@
       });
 
       window.__fixtureState = {
-        store,
         menus,
+        clearStoredValues() {
+          for (let index = localStorage.length - 1; index >= 0; index -= 1) {
+            const key = localStorage.key(index);
+            if (key?.startsWith(storagePrefix)) localStorage.removeItem(key);
+          }
+        },
+        storedValue(key) {
+          return window.GM_getValue(key, undefined);
+        },
         setSitePrevention(value) {
           sitePreventionEnabled = Boolean(value);
         },
@@ -93,6 +132,11 @@
 
   <div id="site-widget" role="grid" tabindex="0">Website-owned PageUp/PageDown widget</div>
   <iframe id="test-frame" title="Iframe fixture" src="browser-fixture-inner.html"></iframe>
+  <iframe
+    id="cross-origin-frame"
+    title="Cross-origin iframe fixture"
+    src="http://localhost:8765/test/browser-fixture-inner.html?expected-host=127.0.0.1&amp;percentage=70"
+  ></iframe>
   <div class="root-content">Root scroll content</div>
 
   <script src="../better-page-up-down.user.js"></script>
@@ -125,6 +169,18 @@
             .find((menu) => menu.label.endsWith(suffix));
           if (!entry) throw new Error(`Menu not found: ${percentage}%`);
           entry.callback();
+        },
+        chooseMenuContaining(text) {
+          const entry = [...window.__fixtureState.menus.values()]
+            .find((menu) => menu.label.includes(text));
+          if (!entry) throw new Error(`Menu not found: ${text}`);
+          entry.callback();
+        },
+        clearStoredValues() {
+          window.__fixtureState.clearStoredValues();
+        },
+        storedValue(key) {
+          return window.__fixtureState.storedValue(key);
         },
         focusRoot() {
           document.body.focus();

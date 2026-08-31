@@ -96,13 +96,111 @@ async (page) => {
   }
 
   await page.goto(fixtureUrl, { waitUntil: 'networkidle' });
+  await page.evaluate(() => window.fixture.clearStoredValues());
+  await page.reload({ waitUntil: 'networkidle' });
 
-  const menuLabels = await page.evaluate(() => window.fixture.menuLabels());
+  let menuLabels = await page.evaluate(() => window.fixture.menuLabels());
   record(
-    'menu presets',
-    [70, 75, 80, 85, 90].every((value) => menuLabels.some((label) => label.endsWith(`${value}%`)))
-      && menuLabels.some((label) => label.startsWith('✓ ') && label.endsWith('85%')),
+    'hostname-scoped menu presets',
+    [70, 75, 80, 85, 90].every((value) => (
+      menuLabels.includes(`${value === 85 ? '✓ ' : ''}此網站 127.0.0.1：${value}%`)
+    )),
     { menuLabels },
+  );
+
+  await page.evaluate(() => window.fixture.choosePercentage(70));
+  let storedSiteValue = await page.evaluate(() => (
+    window.fixture.storedValue('page-scroll-percentage:site:127.0.0.1')
+  ));
+  record('site preset writes the exact hostname key', storedSiteValue === 70, { storedSiteValue });
+
+  await page.reload({ waitUntil: 'networkidle' });
+  menuLabels = await page.evaluate(() => window.fixture.menuLabels());
+  record(
+    'site preset survives reload and path changes',
+    menuLabels.includes('✓ 此網站 127.0.0.1：70%'),
+    { menuLabels },
+  );
+
+  const siblingPage = await page.context().newPage();
+  await siblingPage.goto(`${fixtureUrl}?alternate-path=1`, { waitUntil: 'networkidle' });
+  let siblingLabels = await siblingPage.evaluate(() => window.fixture.menuLabels());
+  record(
+    'same hostname shares the persisted preset across pages',
+    siblingLabels.includes('✓ 此網站 127.0.0.1：70%'),
+    { siblingLabels },
+  );
+
+  await page.evaluate(() => window.fixture.choosePercentage(75));
+  await siblingPage.waitForFunction(() => (
+    window.fixture.menuLabels().includes('✓ 此網站 127.0.0.1：75%')
+  ));
+  siblingLabels = await siblingPage.evaluate(() => window.fixture.menuLabels());
+  record(
+    'same-hostname tabs update through the value-change listener',
+    siblingLabels.includes('✓ 此網站 127.0.0.1：75%'),
+    { siblingLabels },
+  );
+  await siblingPage.close();
+
+  await page.goto('http://localhost:8765/test/browser-fixture.html', { waitUntil: 'networkidle' });
+  await page.evaluate(() => window.fixture.clearStoredValues());
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.evaluate(() => window.fixture.choosePercentage(90));
+  storedSiteValue = await page.evaluate(() => (
+    window.fixture.storedValue('page-scroll-percentage:site:localhost')
+  ));
+  menuLabels = await page.evaluate(() => window.fixture.menuLabels());
+  record(
+    'different hostname keeps an independent preset',
+    storedSiteValue === 90
+      && menuLabels.includes('✓ 此網站 localhost：90%'),
+    { storedSiteValue, menuLabels },
+  );
+
+  await page.goto(fixtureUrl, { waitUntil: 'networkidle' });
+  menuLabels = await page.evaluate(() => window.fixture.menuLabels());
+  record(
+    'returning to the first hostname restores its own preset',
+    menuLabels.includes('✓ 此網站 127.0.0.1：75%'),
+    { menuLabels },
+  );
+
+  await page.evaluate(() => {
+    window.GM_setValue('page-scroll-percentage', 80);
+    window.fixture.choosePercentage(90);
+  });
+  menuLabels = await page.evaluate(() => window.fixture.menuLabels());
+  record(
+    'global changes do not replace a site override',
+    menuLabels.includes('✓ 此網站 127.0.0.1：90%')
+      && menuLabels.includes('清除此網站設定（改用全域 80%）'),
+    { menuLabels },
+  );
+  await page.evaluate(() => window.fixture.chooseMenuContaining('清除此網站設定'));
+  menuLabels = await page.evaluate(() => window.fixture.menuLabels());
+  record(
+    'clearing a site override returns to the global default',
+    menuLabels.includes('✓ 此網站 127.0.0.1：80%')
+      && !menuLabels.some((label) => label.startsWith('清除此網站設定')),
+    { menuLabels },
+  );
+
+  await page.evaluate(() => {
+    window.fixture.choosePercentage(85);
+    window.fixture.chooseMenuContaining('將目前 85% 設為全域預設');
+  });
+  const resetState = await page.evaluate(() => ({
+    global: window.fixture.storedValue('page-scroll-percentage'),
+    site: window.fixture.storedValue('page-scroll-percentage:site:127.0.0.1'),
+    labels: window.fixture.menuLabels(),
+  }));
+  record(
+    'promoting the current value updates global and removes redundant override',
+    resetState.global === 85
+      && resetState.site === undefined
+      && resetState.labels.includes('✓ 此網站 127.0.0.1：85%'),
+    resetState,
   );
 
   const viewportCases = [
@@ -402,19 +500,54 @@ async (page) => {
     { firstKeydown, repeatKeyEvent: keyEvent, afterRepeat },
   );
 
-  const frame = page.frames().find((candidate) => candidate !== page.mainFrame());
+  const frame = page.frames().find((candidate) => (
+    candidate !== page.mainFrame()
+    && candidate.url().startsWith('http://127.0.0.1:8765/test/browser-fixture-inner.html')
+  ));
   if (!frame) throw new Error('iframe fixture did not load');
   await frame.locator('#inner-nested').focus();
   await page.keyboard.press('PageDown');
   await page.waitForTimeout(180);
   const iframePositions = await frame.evaluate(() => {
     const element = document.querySelector('#inner-nested');
-    return { top: element.scrollTop, viewport: element.clientHeight };
+    return {
+      top: element.scrollTop,
+      viewport: element.clientHeight,
+      requestedKeys: window.__innerFixture.requestedKeys,
+      registeredMenuCount: window.__innerFixture.registeredMenuCount,
+    };
   });
   record(
     'same-origin iframe nested scroller',
-    near(iframePositions.top, iframePositions.viewport * 0.85),
+    near(iframePositions.top, iframePositions.viewport * 0.85)
+      && iframePositions.registeredMenuCount === 0
+      && iframePositions.requestedKeys.includes('page-scroll-percentage:site:127.0.0.1'),
     iframePositions,
+  );
+
+  const crossOriginFrame = page.frames().find((candidate) => (
+    candidate.url().startsWith('http://localhost:8765/test/browser-fixture-inner.html')
+  ));
+  if (!crossOriginFrame) throw new Error('cross-origin iframe fixture did not load');
+  await crossOriginFrame.locator('#inner-nested').focus();
+  await page.keyboard.press('PageDown');
+  await page.waitForTimeout(180);
+  const crossOriginPositions = await crossOriginFrame.evaluate(() => {
+    const element = document.querySelector('#inner-nested');
+    return {
+      top: element.scrollTop,
+      viewport: element.clientHeight,
+      requestedKeys: window.__innerFixture.requestedKeys,
+      registeredMenuCount: window.__innerFixture.registeredMenuCount,
+    };
+  });
+  record(
+    'cross-origin iframe uses the outermost hostname without duplicate menus',
+    near(crossOriginPositions.top, crossOriginPositions.viewport * 0.70)
+      && crossOriginPositions.registeredMenuCount === 0
+      && crossOriginPositions.requestedKeys.includes('page-scroll-percentage:site:127.0.0.1')
+      && !crossOriginPositions.requestedKeys.includes('page-scroll-percentage:site:localhost'),
+    crossOriginPositions,
   );
 
   return { passed: results.length, results };

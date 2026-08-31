@@ -11,16 +11,48 @@
     (() => {
       const store = new Map();
       const listeners = [];
+      const requestedKeys = [];
       let nextMenuId = 1;
-      window.GM_getValue = (key, defaultValue) => store.has(key) ? store.get(key) : defaultValue;
+      let registeredMenuCount = 0;
+      const params = new URLSearchParams(location.search);
+      const expectedHost = params.get('expected-host');
+      const percentage = Number(params.get('percentage'));
+      if (expectedHost && [70, 75, 80, 85, 90].includes(percentage)) {
+        store.set(`page-scroll-percentage:site:${expectedHost}`, percentage);
+      }
+
+      window.GM_getValue = (key, defaultValue) => {
+        requestedKeys.push(key);
+        return store.has(key) ? store.get(key) : defaultValue;
+      };
       window.GM_setValue = (key, value) => {
         const oldValue = store.get(key);
         store.set(key, value);
-        listeners.forEach((entry) => entry(key, oldValue, value, false));
+        listeners.forEach((entry) => {
+          if (entry.key === key) entry.callback(key, oldValue, value, false);
+        });
       };
-      window.GM_registerMenuCommand = () => nextMenuId++;
+      window.GM_deleteValue = (key) => {
+        const oldValue = store.get(key);
+        store.delete(key);
+        listeners.forEach((entry) => {
+          if (entry.key === key) entry.callback(key, oldValue, undefined, false);
+        });
+      };
+      window.GM_registerMenuCommand = () => {
+        registeredMenuCount += 1;
+        return nextMenuId++;
+      };
       window.GM_unregisterMenuCommand = () => true;
-      window.GM_addValueChangeListener = (_key, callback) => listeners.push(callback);
+      window.GM_addValueChangeListener = (key, callback) => listeners.push({ key, callback });
+      window.__innerFixture = {
+        get requestedKeys() {
+          return [...requestedKeys];
+        },
+        get registeredMenuCount() {
+          return registeredMenuCount;
+        },
+      };
     })();
   </script>
 </head>

@@ -2,7 +2,7 @@
 // @name         Better PageUp / PageDown
 // @name:zh-TW   跨解析度 PageUp／PageDown
 // @namespace    better-page-scroll
-// @version      1.0.4
+// @version      1.1.0
 // @description  Scroll a configurable percentage on a tap, then leave held-key repeats to Chromium.
 // @description:zh-TW 輕按時捲動可設定的畫面比例；長按後續 repeat 完全交回 Chromium。
 // @homepageURL  https://greasyfork.org/zh-TW/scripts/593678-better-pageup-pagedown
@@ -17,6 +17,7 @@
 // @grant        GM_unregisterMenuCommand
 // @grant        GM_getValue
 // @grant        GM_setValue
+// @grant        GM_deleteValue
 // @grant        GM_addValueChangeListener
 // @license      MIT
 // ==/UserScript==
@@ -26,7 +27,8 @@
 
   const ALLOWED_PERCENTAGES = Object.freeze([70, 75, 80, 85, 90]);
   const DEFAULT_PERCENTAGE = 85;
-  const STORAGE_KEY = 'page-scroll-percentage';
+  const GLOBAL_STORAGE_KEY = 'page-scroll-percentage';
+  const SITE_STORAGE_PREFIX = 'page-scroll-percentage:site:';
   const SCROLL_EPSILON = 1;
   const ANIMATION_DURATION_MS = 146;
   const INITIAL_PROGRESS = 0.01;
@@ -49,27 +51,86 @@
     '[role="tablist"]',
   ].join(',');
 
-  let currentPercentage = normalizePercentage(readStoredPercentage());
+  const siteHostname = resolveSiteHostname();
+  const siteStorageKey = `${SITE_STORAGE_PREFIX}${siteHostname}`;
+  const isTopLevelDocument = window.top === window;
+
+  let globalPercentage = normalizePercentage(readStoredValue(
+    GLOBAL_STORAGE_KEY,
+    DEFAULT_PERCENTAGE,
+  ));
+  let sitePercentage = normalizeOptionalPercentage(readStoredValue(siteStorageKey, null));
+  let currentPercentage = sitePercentage ?? globalPercentage;
   let lastInteractionPath = [];
   let menuIds = [];
   const activeAnimations = new Map();
 
-  function normalizePercentage(value) {
-    const numericValue = Number(value);
-    return ALLOWED_PERCENTAGES.includes(numericValue)
-      ? numericValue
-      : DEFAULT_PERCENTAGE;
+  function normalizeHostname(value) {
+    return String(value || '').trim().toLowerCase();
   }
 
-  function readStoredPercentage() {
-    if (typeof GM_getValue !== 'function') return DEFAULT_PERCENTAGE;
-    return GM_getValue(STORAGE_KEY, DEFAULT_PERCENTAGE);
-  }
-
-  function writeStoredPercentage(value) {
-    if (typeof GM_setValue === 'function') {
-      GM_setValue(STORAGE_KEY, value);
+  function hostnameFromOrigin(origin) {
+    try {
+      return normalizeHostname(new URL(origin).hostname);
+    } catch {
+      return '';
     }
+  }
+
+  function resolveSiteHostname() {
+    try {
+      const topHostname = normalizeHostname(window.top.location.hostname);
+      if (topHostname) return topHostname;
+    } catch {
+      // Cross-origin frames cannot read top.location directly.
+    }
+
+    const ancestorOrigins = window.location.ancestorOrigins;
+    if (ancestorOrigins?.length) {
+      const topOrigin = typeof ancestorOrigins.item === 'function'
+        ? ancestorOrigins.item(ancestorOrigins.length - 1)
+        : ancestorOrigins[ancestorOrigins.length - 1];
+      const ancestorHostname = hostnameFromOrigin(topOrigin);
+      if (ancestorHostname) return ancestorHostname;
+    }
+
+    return normalizeHostname(window.location.hostname);
+  }
+
+  function normalizeOptionalPercentage(value) {
+    const numericValue = Number(value);
+    return ALLOWED_PERCENTAGES.includes(numericValue) ? numericValue : null;
+  }
+
+  function normalizePercentage(value) {
+    return normalizeOptionalPercentage(value) ?? DEFAULT_PERCENTAGE;
+  }
+
+  function readStoredValue(key, fallback) {
+    if (typeof GM_getValue !== 'function') return fallback;
+    return GM_getValue(key, fallback);
+  }
+
+  function writeStoredValue(key, value) {
+    if (typeof GM_setValue === 'function') {
+      GM_setValue(key, value);
+    }
+  }
+
+  function deleteStoredValue(key) {
+    if (typeof GM_deleteValue === 'function') {
+      GM_deleteValue(key);
+      return;
+    }
+
+    // The metadata grants GM_deleteValue, but null remains a safe fallback for
+    // lightweight test harnesses or userscript managers with a partial API.
+    writeStoredValue(key, null);
+  }
+
+  function refreshEffectivePercentage() {
+    currentPercentage = sitePercentage ?? globalPercentage;
+    registerMenus();
   }
 
   function unregisterMenus() {
@@ -89,33 +150,74 @@
   }
 
   function registerMenus() {
-    if (typeof GM_registerMenuCommand !== 'function') return;
+    if (!isTopLevelDocument || typeof GM_registerMenuCommand !== 'function') return;
 
     unregisterMenus();
     for (const percentage of ALLOWED_PERCENTAGES) {
       const selected = percentage === currentPercentage;
-      const label = `${selected ? '✓ ' : ''}PageUp／PageDown：${percentage}%`;
+      const label = `${selected ? '✓ ' : ''}此網站 ${siteHostname}：${percentage}%`;
       const id = GM_registerMenuCommand(
         label,
-        () => setPercentage(percentage),
+        () => setSitePercentage(percentage),
         {
           title: selected
-            ? `目前每次輕按捲動 ${percentage}% 畫面高度`
-            : `改為每次輕按捲動 ${percentage}% 畫面高度`,
+            ? `目前在 ${siteHostname} 每次輕按捲動 ${percentage}% 畫面高度`
+            : `將 ${siteHostname} 改為每次輕按捲動 ${percentage}% 畫面高度`,
           autoClose: true,
         },
       );
       menuIds.push(id);
     }
+
+    if (sitePercentage !== null) {
+      const clearId = GM_registerMenuCommand(
+        `清除此網站設定（改用全域 ${globalPercentage}%）`,
+        clearSitePercentage,
+        {
+          title: `讓 ${siteHostname} 改回使用全域預設 ${globalPercentage}%`,
+          autoClose: true,
+        },
+      );
+      menuIds.push(clearId);
+    }
+
+    if (currentPercentage !== globalPercentage) {
+      const globalId = GM_registerMenuCommand(
+        `將目前 ${currentPercentage}% 設為全域預設`,
+        setCurrentAsGlobalDefault,
+        {
+          title: `將未覆寫網站的全域預設改為 ${currentPercentage}%`,
+          autoClose: true,
+        },
+      );
+      menuIds.push(globalId);
+    }
   }
 
-  function setPercentage(value, persist = true) {
+  function setSitePercentage(value) {
     const nextPercentage = normalizePercentage(value);
-    if (nextPercentage === currentPercentage) return;
+    sitePercentage = nextPercentage;
+    writeStoredValue(siteStorageKey, nextPercentage);
+    refreshEffectivePercentage();
+  }
 
-    currentPercentage = nextPercentage;
-    if (persist) writeStoredPercentage(nextPercentage);
-    registerMenus();
+  function clearSitePercentage() {
+    sitePercentage = null;
+    deleteStoredValue(siteStorageKey);
+    refreshEffectivePercentage();
+  }
+
+  function setCurrentAsGlobalDefault() {
+    const nextGlobalPercentage = currentPercentage;
+    globalPercentage = nextGlobalPercentage;
+    writeStoredValue(GLOBAL_STORAGE_KEY, nextGlobalPercentage);
+
+    // Once the current value is the global default, keeping an identical site
+    // override would be redundant and would stop this site following future
+    // global changes.
+    sitePercentage = null;
+    deleteStoredValue(siteStorageKey);
+    refreshEffectivePercentage();
   }
 
   function isElement(node) {
@@ -460,8 +562,13 @@
   window.addEventListener('keydown', handleKeydown, false);
 
   if (typeof GM_addValueChangeListener === 'function') {
-    GM_addValueChangeListener(STORAGE_KEY, (_name, _oldValue, newValue) => {
-      setPercentage(newValue, false);
+    GM_addValueChangeListener(GLOBAL_STORAGE_KEY, (_name, _oldValue, newValue) => {
+      globalPercentage = normalizePercentage(newValue);
+      refreshEffectivePercentage();
+    });
+    GM_addValueChangeListener(siteStorageKey, (_name, _oldValue, newValue) => {
+      sitePercentage = normalizeOptionalPercentage(newValue);
+      refreshEffectivePercentage();
     });
   }
 

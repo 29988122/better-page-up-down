@@ -19,8 +19,11 @@
 ## 行為
 
 - 預設每次輕按捲動目前 scrollport 的 **85%**，保留 15% 重疊內容。
-- Tampermonkey 選單提供 70%、75%、80%、85%、90%。
-- 選單值保存在目前瀏覽器；新裝置首次使用仍為 85%。
+- Tampermonkey 選單提供 70%、75%、80%、85%、90%，並以最外層頁面的 hostname 分開保存；例如 `chatgpt.com` 與 `app.example.com` 可使用不同設定。
+- 同 hostname 的所有路徑、`http`／`https` 與不同 port 共用設定；不同子網域彼此獨立。
+- 網站尚未設定時沿用既有全域預設；預設為 85%。可清除網站覆寫，也可將目前網站值設成新的全域預設。
+- 設定保存在目前瀏覽器的 Tampermonkey storage；重新整理、重開瀏覽器與更新腳本後仍保留，但不保證跨裝置同步。
+- 同網站其他分頁會即時套用新值；跨來源 iframe 也使用最外層網站的 hostname 設定。
 - 距離在每次按鍵時重新以 `clientHeight × percentage` 計算，沒有固定 pixel 距離。
 - 優先捲動鍵盤焦點所在區域，其次是最近點擊或滾輪操作的內層捲動區，最後才是整頁。
 - 內層捲動區到頂或到底時，會改找仍能沿該方向捲動的祖先。
@@ -45,7 +48,7 @@ Tampermonkey 無法注入的受保護頁面不在支援範圍，例如 `chrome:/
 node --test test/userscript.test.mjs
 ```
 
-瀏覽器 fixture 位於 `test/browser-fixture.html`，涵蓋根頁面、nested scroller、祖先 fallback、網站快捷鍵、互動元件、auto-repeat 與多種 viewport／比例。
+瀏覽器 fixture 位於 `test/browser-fixture.html`，涵蓋 hostname 個別設定、重新載入持久化、多分頁同步、同源／跨來源 iframe、根頁面、nested scroller、祖先 fallback、網站快捷鍵、互動元件、auto-repeat 與多種 viewport／比例。
 
 `test/browser-runner.js` 是可交給 Playwright CLI `run-code` 的真實瀏覽器測試，另含十次 timing trace、40 ms long-task 追趕、快速連按及 reduced-motion 驗收。先從專案根目錄以 HTTP server 提供 fixture，再在 Chromium 執行該 runner。
 
